@@ -1,0 +1,15 @@
+[package]
+name = "raytracing"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-std = { version = "1.12.0", features = ["attributes"] }
+bytemuck = "1.12.1"
+cgmath = "0.18.0"
+futures-intrusive = "0.4.0"
+image = "0.24.4"
+wgpu = "0.14.0"
+zerocopy = "0.6.1"
