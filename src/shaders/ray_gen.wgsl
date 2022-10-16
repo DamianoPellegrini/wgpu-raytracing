@@ -4,31 +4,71 @@ struct Ray {
     direction: vec3<f32>,
 }
 
-fn ray_at(ray: Ray, t: f32) -> vec3<f32> {
-    return ray.origin + ray.direction * t;
+struct HitRecord {
+    hit_point: vec3<f32>,
+    normal: vec3<f32>,
+    distance: f32,
+    front_face: bool,
 }
 
-fn hit_sphere(center: vec3<f32>, radius: f32, ray: Ray) -> f32 {
-    let oc = ray.origin - center;
+struct Sphere {
+    center: vec3<f32>,
+    radius: f32,
+}
+
+fn ray_at(ray: Ray, dist: f32) -> vec3<f32> {
+    return ray.origin + ray.direction * dist;
+}
+
+fn set_face_normal(rec: ptr<function, HitRecord>, ray: Ray, outward_normal: vec3<f32>) {
+    (*rec).front_face = dot(ray.direction, outward_normal) < 0.0;
+    if ((*rec).front_face) {
+        (*rec).normal = outward_normal
+    } else {
+        (*rec).normal = -outward_normal
+    };
+}
+
+fn hit_sphere(sphere: Sphere, ray: Ray, dist_min: f32, dist_max: f32, rec:  ptr<function, HitRecord>) -> bool {
+    let oc = ray.origin - sphere.center;
     let a = pow(length(ray.direction), 2.0);
     let half_b = dot(oc, ray.direction);
-    let c = pow(length(oc), 2.0) - radius*radius;
+    let c = pow(length(oc), 2.0) - pow(sphere.radius, 2.0);
     let discriminant = half_b*half_b - a*c;
     if (discriminant < 0.0) {
-        return -1.0;
-    } else {
-        return (-half_b - sqrt(discriminant) ) / a;
+        return false;
     }
+    let sqrtd = sqrt(discriminant);
+    var root = (-half_b - sqrtd) / a;
+    if (root < dist_min || dist_max < root) {
+        root = (-half_b + sqrtd) / a;
+        if (root < dist_min || dist_max < root) {
+            return false;
+        }
+    }
+
+    (*rec).distance = root;
+    (*rec).hit_point = ray_at(ray, (*rec).distance);
+    let outward_normal = ((*rec).hit_point - sphere.center) / sphere.radius;
+    set_face_normal(rec, ray, outward_normal);
+
+    return true;
 }
 
 fn ray_color(ray: Ray) -> vec3<f32> {
-    var t = hit_sphere(vec3<f32>(0.0, 0.0, -1.0), 0.5, ray);
-    if (t > 0.0) {
-        let N = normalize(ray_at(ray, t) - vec3<f32>(0.0, 0.0, -1.0));
-        return 0.5 * vec3<f32>(N.x + 1.0, N.y + 1.0, N.z + 1.0);
+    var rec: HitRecord;
+
+    let sphere = Sphere(
+        vec3<f32>(0.0, 0.0, -1.0),
+        0.5,
+    );
+
+    if(hit_sphere(sphere, ray, 0.0, 100.0, &rec)) {
+        return 0.5 * (rec.normal + vec3<f32>(1.0, 1.0, 1.0));
     }
+
     let unit_direction = normalize(ray.direction);
-    t = 0.5 * (unit_direction.y + 1.0);
+    let t = 0.5 * (unit_direction.y + 1.0); // 0.0 to 1.0 to -1.0 to 1.0
     return (1.0 - t) * vec3<f32>(1.0, 1.0, 1.0) + t * vec3<f32>(0.5, 0.7, 1.0);
 }
 

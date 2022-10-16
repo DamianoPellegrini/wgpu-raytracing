@@ -94,11 +94,11 @@ impl RaytracingRenderer {
             usage: BufferUsages::UNIFORM,
         });
 
-        let ray_gen_shader = self
+        let raytracing_shader = self
             .device
             .create_shader_module(include_wgsl!("shaders/ray_gen.wgsl"));
 
-        let bg_lay = self
+        let compute_bind_group_layout = self
             .device
             .create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("Ray generation bind group layout"),
@@ -126,9 +126,9 @@ impl RaytracingRenderer {
                 ],
             });
 
-        let bg = self.device.create_bind_group(&BindGroupDescriptor {
+        let compute_bind_group = self.device.create_bind_group(&BindGroupDescriptor {
             label: Some("Ray generation bind group"),
-            layout: &bg_lay,
+            layout: &compute_bind_group_layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -141,20 +141,20 @@ impl RaytracingRenderer {
             ],
         });
 
-        let pip_lay = self
+        let pipeline_layout = self
             .device
             .create_pipeline_layout(&PipelineLayoutDescriptor {
                 label: Some("Ray generation pipeline layout"),
-                bind_group_layouts: &[&bg_lay],
+                bind_group_layouts: &[&compute_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
-        let ray_gen_pipeline = self
+        let raytracing_pipeline = self
             .device
             .create_compute_pipeline(&ComputePipelineDescriptor {
                 label: Some("Ray generation pipeline"),
-                layout: Some(&pip_lay),
-                module: &ray_gen_shader,
+                layout: Some(&pipeline_layout),
+                module: &raytracing_shader,
                 entry_point: "main",
             });
 
@@ -169,8 +169,8 @@ impl RaytracingRenderer {
                 label: Some("Ray generation compute pass"),
             });
 
-            pass.set_bind_group(0, &bg, &[]);
-            pass.set_pipeline(&ray_gen_pipeline);
+            pass.set_bind_group(0, &compute_bind_group, &[]);
+            pass.set_pipeline(&raytracing_pipeline);
             pass.dispatch_workgroups(8192, 8192, 1);
         }
 

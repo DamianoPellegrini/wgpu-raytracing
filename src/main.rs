@@ -2,7 +2,7 @@ use raytracing::renderer::RaytracingRenderer;
 
 #[async_std::main]
 async fn main() {
-    let dimension = 8192;
+    let dimension = 1024;
 
     let raw_bytes = RaytracingRenderer::new()
         .await
