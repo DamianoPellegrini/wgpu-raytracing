@@ -1,9 +1,13 @@
+use std::num::{NonZeroU32, NonZeroU64};
+
 use wgpu::{
-    include_wgsl, Adapter, Backends, BindGroupDescriptor, BindGroupLayoutDescriptor,
+    include_wgsl,
+    util::{BufferInitDescriptor, DeviceExt},
+    Adapter, Backends, BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, BufferBindingType, BufferDescriptor, BufferUsages,
-    CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline, ComputePipelineDescriptor,
-    Device, DeviceDescriptor, Instance, Maintain, PipelineLayoutDescriptor, Queue,
-    RequestAdapterOptions, ShaderStages,
+    CommandEncoderDescriptor, ComputePassDescriptor, ComputePipelineDescriptor,
+    Device, DeviceDescriptor, Instance, Maintain, PipelineLayoutDescriptor,
+    Queue, RequestAdapterOptions, ShaderStages, BindingResource, ImageCopyBuffer, ImageDataLayout,
 };
 use zerocopy::AsBytes;
 
@@ -20,23 +24,17 @@ pub trait Render {
 }
 
 pub struct RaytracingRenderer {
-    instance: Instance,
-    adapter: Adapter,
+    _instance: Instance,
+    _adapter: Adapter,
     device: Device,
     queue: Queue,
-
-    ray_gen_pipeline: ComputePipeline,
-    ray_chit_pipeline: ComputePipeline,
-    ray_ahit_pipeline: ComputePipeline,
-    ray_miss_pipeline: ComputePipeline,
-    ray_intersect_pipeline: ComputePipeline,
 }
 
 impl RaytracingRenderer {
     pub async fn new() -> Self {
-        let instance = Instance::new(Backends::PRIMARY);
+        let _instance = Instance::new(Backends::PRIMARY);
 
-        let adapter = instance
+        let _adapter = _instance
             .request_adapter(&RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
@@ -45,7 +43,7 @@ impl RaytracingRenderer {
             .await
             .expect("No suitable adapter found");
 
-        let (device, queue) = adapter
+        let (device, queue) = _adapter
             .request_device(
                 &DeviceDescriptor {
                     label: Some("Main device"),
@@ -56,70 +54,44 @@ impl RaytracingRenderer {
             .await
             .expect("Failed to create device");
 
-        let ray_gen_shader = device.create_shader_module(include_wgsl!("shaders/ray_gen.wgsl"));
-        let ray_chit_shader = device.create_shader_module(include_wgsl!("shaders/ray_chit.wgsl"));
-        let ray_ahit_shader = device.create_shader_module(include_wgsl!("shaders/ray_ahit.wgsl"));
-        let ray_miss_shader = device.create_shader_module(include_wgsl!("shaders/ray_miss.wgsl"));
-        let ray_intersect_shader =
-            device.create_shader_module(include_wgsl!("shaders/ray_intersect.wgsl"));
-
-        let ray_gen_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Ray generation pipeline"),
-            layout: None,
-            module: &ray_gen_shader,
-            entry_point: "main",
-        });
-        let ray_chit_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Ray closest hit pipeline"),
-            layout: None,
-            module: &ray_chit_shader,
-            entry_point: "main",
-        });
-        let ray_ahit_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Ray any hit pipeline"),
-            layout: None,
-            module: &ray_ahit_shader,
-            entry_point: "main",
-        });
-        let ray_miss_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Ray miss pipeline"),
-            layout: None,
-            module: &ray_miss_shader,
-            entry_point: "main",
-        });
-        let ray_intersect_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("Ray intersect pipeline"),
-            layout: None,
-            module: &ray_intersect_shader,
-            entry_point: "main",
-        });
-
         Self {
-            instance,
-            adapter,
+            _instance,
+            _adapter,
             device,
             queue,
-            ray_gen_pipeline,
-            ray_chit_pipeline,
-            ray_ahit_pipeline,
-            ray_miss_pipeline,
-            ray_intersect_pipeline,
         }
     }
 
-    pub async fn porcodio(&self, width: u64, height: u64) -> Vec<u8> {
-        let staging_buf = self.device.create_buffer(&BufferDescriptor {
-            label: Some("Ray buffer"),
-            size: width * height * std::mem::size_of::<[f32; 4]>() as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+    pub async fn render_as_rgba8unorm_slice(&self, width: u32, height: u32) -> Vec<u8> {
+        let out_tex_extent = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+
+        let out_tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Output texture"),
+            dimension: wgpu::TextureDimension::D2,
+            sample_count: 1,
+            mip_level_count: 1,
+            usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::STORAGE_BINDING,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            size: out_tex_extent,
+        });
+
+        let out_tex_view = out_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let out_buffer = self.device.create_buffer(&BufferDescriptor {
+            label: Some("Output buffer"),
+            size: (width * height * 4) as u64,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 
-        let buffer = self.device.create_buffer(&BufferDescriptor {
-            label: Some("Ray buffer"),
-            size: width * height * std::mem::size_of::<[f32; 4]>() as u64,
-            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+        let in_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Input buffer"),
+            contents: [width, height].as_bytes(),
+            usage: BufferUsages::UNIFORM,
         });
 
         let ray_gen_shader = self
@@ -130,25 +102,43 @@ impl RaytracingRenderer {
             .device
             .create_bind_group_layout(&BindGroupLayoutDescriptor {
                 label: Some("Ray generation bind group layout"),
-                entries: &[BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                entries: &[
+                    BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
                     },
-                    count: None,
-                }],
+                    BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: ShaderStages::COMPUTE,
+                        ty: BindingType::Buffer {
+                            ty: BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: NonZeroU64::new(8),
+                        },
+                        count: None,
+                    },
+                ],
             });
 
         let bg = self.device.create_bind_group(&BindGroupDescriptor {
             label: Some("Ray generation bind group"),
             layout: &bg_lay,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: staging_buf.as_entire_binding(),
-            }],
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&out_tex_view),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: in_buffer.as_entire_binding(),
+                },
+            ],
         });
 
         let pip_lay = self
@@ -181,32 +171,37 @@ impl RaytracingRenderer {
 
             pass.set_bind_group(0, &bg, &[]);
             pass.set_pipeline(&ray_gen_pipeline);
-            pass.dispatch_workgroups(256, 256, 64);
+            pass.dispatch_workgroups(8192, 8192, 1);
         }
 
-        encoder.copy_buffer_to_buffer(
-            &staging_buf,
-            0,
-            &buffer,
-            0,
-            width * height * std::mem::size_of::<[f32; 4]>() as u64,
+        encoder.copy_texture_to_buffer(
+            out_tex.as_image_copy(),
+            ImageCopyBuffer {
+                buffer: &out_buffer,
+                layout: ImageDataLayout {
+                    bytes_per_row: NonZeroU32::new(4 * width),
+                    rows_per_image: NonZeroU32::new(height),
+                    offset: 0,
+                },
+            },
+            out_tex_extent,
         );
 
         self.queue.submit(Some(encoder.finish()));
 
         let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
-        buffer
+        out_buffer
             .slice(..)
             .map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
         self.device.poll(Maintain::Wait);
 
         if let Some(Ok(())) = receiver.receive().await {
-            let data = buffer.slice(..).get_mapped_range();
+            let data = out_buffer.slice(..).get_mapped_range();
             let vec = data.as_bytes().to_vec();
             drop(data);
 
-            buffer.unmap();
+            out_buffer.unmap();
 
             vec
         } else {
